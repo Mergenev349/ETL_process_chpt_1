@@ -235,14 +235,14 @@ def check_balance(account_rk):
         if conn:
             conn.close()
 
-#print('Проверка текущего баланса')
-#check_balance(24656)
+print('Проверка текущего баланса')
+check_balance(24656)
 
-#print('Запуск ETL-процесса')
-#load_csv_to_postgres('ft_balance_f.csv', 'ft_balance_f', truncate=True)
+print('Запуск ETL-процесса')
+load_csv_to_postgres('ft_balance_f.csv', 'ft_balance_f', truncate=True)
 
-#print('Проверка текущего баланса')
-#check_balance(24656)
+print('Проверка текущего баланса')
+check_balance(24656)
 
-load_csv_to_postgres('ft_balance_f.csv', 'ft_balance_f')
-load_csv_to_postgres('ft_posting_f.csv', 'ft_posting_f', truncate=True)
+#load_csv_to_postgres('ft_balance_f.csv', 'ft_balance_f')
+#load_csv_to_postgres('ft_posting_f.csv', 'ft_posting_f', truncate=True)
