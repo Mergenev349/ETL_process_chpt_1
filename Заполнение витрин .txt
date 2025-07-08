@@ -1,0 +1,317 @@
+--Создание витрины dm_account_turnover_f (удалил первичный ключ)
+CREATE TABLE IF NOT EXISTS dm.dm_account_turnover_f 
+(
+    on_date date NOT NULL,
+    account_rk integer NOT NULL,
+    credit_amount numeric(23,8),
+    credit_amount_rub numeric(23,8),
+    debet_amount numeric(23,8),
+    debet_amount_rub numeric(23,8)
+)
+
+--Создание витрины dm_account_balance_f (удалил первичный ключ)
+CREATE TABLE IF NOT EXISTS dm.dm_account_balance_f
+(
+    on_date date NOT NULL,
+    account_rk integer NOT NULL,
+    balance_out numeric(23,8),
+    balance_out_rub numeric(23,8)
+)
+
+
+--Процедура для наполнения данных в витрину dm_account_turnover_f
+CREATE OR REPLACE PROCEDURE ds.fill_account_turnover_f(i_on_date DATE)
+AS $$
+DECLARE
+    v_process_id BIGINT;
+	v_rows_affected INTEGER := 0;
+	v_temp_rows INTEGER;
+	v_error_message TEXT;
+BEGIN
+    INSERT INTO logs.procedure_logs(
+        procedure_name,
+		start_time,
+		status,
+		parameters
+	) VALUES (
+        'ds.fill_account_turnover_f',
+		CURRENT_TIMESTAMP,
+		'STARTED',
+		json_build_object('on_date', i_on_date)
+	) RETURNING log_id INTO v_process_id;
+
+	BEGIN
+	    DELETE FROM dm.dm_account_turnover_f WHERE on_date = i_on_date;
+		GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
+		v_rows_affected := v_rows_affected + v_temp_rows;
+
+		INSERT INTO dm.dm_account_turnover_f (
+    on_date, account_rk, credit_amount, credit_amount_rub, debet_amount, debet_amount_rub
+		)
+		WITH
+		credit_turnover AS (
+            SELECT
+			    p.credit_account_rk AS account_rk,
+				SUM(p.credit_amount) AS credit_amount,
+				SUM(p.credit_amount * COALESCE(er.reduced_cource, 1)) AS credit_amount_rub
+			FROM ds.ft_posting_f p
+			JOIN ds.md_account_d a ON p.credit_account_rk = a.account_rk
+			    AND a.data_actual_date <= i_on_date 
+				AND (a.data_actual_end_date IS NULL OR a.data_actual_end_date > i_on_date)
+			LEFT JOIN ds.md_exchange_rate_d er ON a.currency_rk = er.currency_rk
+			AND er.data_actual_date <= i_on_date 
+			AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
+			WHERE p.oper_date = i_on_date
+			GROUP BY p.credit_account_rk
+		),
+		debet_turnover AS (
+            SELECT
+			    p.debet_account_rk AS account_rk,
+				SUM(p.debet_amount) AS debet_amount,
+				SUM(p.debet_amount * COALESCE(er.reduced_cource, 1)) AS debet_amount_rub
+			FROM ds.ft_posting_f p
+			JOIN ds.md_account_d a ON p.debet_account_rk = a.account_rk
+			    AND a.data_actual_date <= i_on_date 
+				AND (a.data_actual_end_date IS NULL OR a.data_actual_end_date > i_on_date)
+			LEFT JOIN ds.md_exchange_rate_d er ON a.currency_rk = er.currency_rk
+			AND er.data_actual_date <= i_on_date 
+			AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
+			WHERE p.oper_date = i_on_date
+			GROUP BY p.debet_account_rk
+		)
+		SELECT
+		    i_on_date,
+			COALESCE(c.account_rk, d.account_rk),
+			COALESCE(c.credit_amount, 0),
+			COALESCE(c.credit_amount_rub, 0),
+			COALESCE(d.debet_amount, 0),
+			COALESCE(d.debet_amount_rub, 0)
+		FROM credit_turnover c
+		FULL OUTER JOIN debet_turnover d
+		ON c.account_rk = d.account_rk;
+
+		GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
+		v_rows_affected := v_temp_rows + v_rows_affected;
+
+		UPDATE logs.procedure_logs
+		SET end_time = CURRENT_TIMESTAMP,
+		    status = 'COMPLETED',
+			rows_affected = v_rows_affected
+		WHERE log_id = v_process_id;
+
+		EXCEPTION WHEN OTHERS THEN
+		   GET STACKED DIAGNOSTICS v_error_message = MESSAGE_TEXT;
+		   UPDATE logs.procedure_logs
+		   SET end_time = CURRENT_TIMESTAMP,
+		       status = 'FAILED',
+			   error_message = v_error_message,
+			   rows_affected = v_rows_affected
+		   WHERE log_id = v_process_id;
+
+		   RAISE;
+	END;
+END;
+$$ LANGUAGE plpgsql;
+
+--Заполнение данных
+DO $$
+BEGIN
+	CALL ds.fill_account_turnover_f('2018-01-10');
+	CALL ds.fill_account_turnover_f('2018-01-11');
+	CALL ds.fill_account_turnover_f('2018-01-12');
+	CALL ds.fill_account_turnover_f('2018-01-15');
+	CALL ds.fill_account_turnover_f('2018-01-16');
+	CALL ds.fill_account_turnover_f('2018-01-17');
+	CALL ds.fill_account_turnover_f('2018-01-18');
+	CALL ds.fill_account_turnover_f('2018-01-19');
+	CALL ds.fill_account_turnover_f('2018-01-22');
+	CALL ds.fill_account_turnover_f('2018-01-23');
+	CALL ds.fill_account_turnover_f('2018-01-24');
+	CALL ds.fill_account_turnover_f('2018-01-25');
+	CALL ds.fill_account_turnover_f('2018-01-26');
+	CALL ds.fill_account_turnover_f('2018-01-29');
+	CALL ds.fill_account_turnover_f('2018-01-30');
+	CALL ds.fill_account_turnover_f('2018-01-31');
+	RAISE NOTICE 'Витрина успешно заполнена за январь 2018';
+EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'Ошибка при заполнении данных: %', SQLEERM;
+END;
+$$;
+
+--Процедура для наполнения данных в витрину dm.account_balance_f
+CREATE OR REPLACE PROCEDURE ds.fill_account_balance_f(i_on_date DATE)
+AS $$
+DECLARE
+    v_process_id BIGINT;
+    v_rows_affected INTEGER := 0;
+	v_temp_rows INTEGER;
+    v_error_message TEXT;
+    v_prev_date DATE := i_on_date - INTERVAL '1 day';
+BEGIN
+    -- Начало лога
+    INSERT INTO logs.procedure_logs (
+        procedure_name, 
+        start_time, 
+        status, 
+        parameters
+    ) VALUES (
+        'ds.fill_account_balance_f', 
+        CURRENT_TIMESTAMP, 
+        'STARTED', 
+        jsonb_build_object('calculation_date', i_on_date)
+    ) RETURNING log_id INTO v_process_id;
+
+    -- Основная логика
+    BEGIN
+        -- Очистка старых данных
+        DELETE FROM dm.dm_account_balance_f WHERE on_date = i_on_date;
+        GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
+		v_rows_affected = v_temp_rows + v_rows_affected;
+        
+        -- Для начальной даты (31.12.2017) - особый случай
+        IF i_on_date = '2017-12-31'::DATE THEN
+            INSERT INTO dm.dm_account_balance_f 
+			    (on_date, account_rk, balance_out, balance_out_rub)
+			SELECT 
+				b.on_date,
+				b.account_rk,
+				b.balance_out,
+				b.balance_out * COALESCE(er.reduced_cource, 1) AS balance_out_rub
+			FROM ds.ft_balance_f b
+			JOIN ds.md_account_d a 
+				ON b.account_rk = a.account_rk
+			LEFT JOIN ds.md_exchange_rate_d er 
+				ON a.currency_rk = er.currency_rk
+				AND er.data_actual_date <= i_on_date 
+				AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
+			WHERE b.on_date = i_on_date;
+        ELSE
+            -- Для последующих дат - расчет по алгоритму
+            INSERT INTO dm.dm_account_balance_f
+            (on_date, account_rk, balance_out, balance_out_rub)
+            WITH 
+            -- Актуальные счета на дату расчета
+            active_accounts AS (
+                SELECT 
+                    a.account_rk,
+                    a.char_type,
+                    a.currency_rk
+                FROM ds.md_account_d a
+                WHERE a.data_actual_date <= i_on_date 
+                AND (a.data_actual_end_date IS NULL OR a.data_actual_end_date > i_on_date)
+            ),
+            -- Остатки за предыдущий день
+            prev_balances AS (
+                SELECT 
+                    b.account_rk,
+                    b.balance_out,
+                    b.balance_out_rub
+                FROM dm.dm_account_balance_f b
+                WHERE b.on_date = v_prev_date
+            ),
+            -- Обороты за текущий день
+            current_turnovers AS (
+                SELECT 
+                    t.account_rk,
+                    t.credit_amount,
+                    t.credit_amount_rub,
+                    t.debet_amount,
+                    t.debet_amount_rub
+                FROM dm.dm_account_turnover_f t
+                WHERE t.on_date = i_on_date
+            )
+            SELECT 
+                i_on_date,
+                aa.account_rk,
+                CASE 
+                    WHEN aa.char_type = 'А' THEN 
+                        COALESCE(pb.balance_out, 0) + COALESCE(ct.debet_amount, 0) - COALESCE(ct.credit_amount, 0)
+                    WHEN aa.char_type = 'П' THEN 
+                        COALESCE(pb.balance_out, 0) - COALESCE(ct.debet_amount, 0) + COALESCE(ct.credit_amount, 0)
+                END AS balance_out,
+                CASE 
+                    WHEN aa.char_type = 'А' THEN 
+                        COALESCE(pb.balance_out_rub, 0) + COALESCE(ct.debet_amount_rub, 0) - COALESCE(ct.credit_amount_rub, 0)
+                    WHEN aa.char_type = 'П' THEN 
+                        COALESCE(pb.balance_out_rub, 0) - COALESCE(ct.debet_amount_rub, 0) + COALESCE(ct.credit_amount_rub, 0)
+                END AS balance_out_rub
+            FROM active_accounts aa
+            LEFT JOIN prev_balances pb ON aa.account_rk = pb.account_rk
+            LEFT JOIN current_turnovers ct ON aa.account_rk = ct.account_rk;
+        END IF;
+        
+        GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
+		v_rows_affected = v_temp_rows + v_rows_affected;
+        
+        -- Логирование успеха
+        UPDATE logs.procedure_logs
+        SET 
+            end_time = CURRENT_TIMESTAMP,
+            status = 'COMPLETED',
+            rows_affected = v_rows_affected
+        WHERE log_id = v_process_id;
+        
+    EXCEPTION WHEN OTHERS THEN
+        -- Логирование ошибки
+        GET STACKED DIAGNOSTICS v_error_message = MESSAGE_TEXT;
+        
+        UPDATE logs.procedure_logs
+        SET 
+            end_time = CURRENT_TIMESTAMP,
+            status = 'FAILED',
+            error_message = v_error_message,
+            rows_affected = v_rows_affected
+        WHERE log_id = v_process_id;
+        
+        RAISE;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+--Заполнение данных за 2017-12-31
+CALL ds.fill_account_balance_f('2017-12-31')
+
+--Заполнение данных за январь 2018 года
+CREATE OR REPLACE PROCEDURE ds.fill_account_balance_for_period(i_start_date DATE, i_end_date DATE)
+AS $$
+DECLARE
+    v_current_date DATE;
+    v_process_id BIGINT;
+BEGIN
+    INSERT INTO logs.procedure_logs(
+        procedure_name,
+		start_time,
+		status,
+		parameters
+	) VALUES (
+        'ds.fill_account_balance_for_period',
+		CURRENT_TIMESTAMP,
+		'STARTED',
+		jsonb_build_object('start_date', i_start_date, 'end_date', i_end_date)
+	) RETURNING log_id INTO v_process_id;
+
+	FOR v_current_date IN SELECT generate_series(i_start_date, i_end_date, INTERVAL '1 day'):: DATE
+	    LOOP
+		    CALL ds.fill_account_balance_f(v_current_date);
+		END LOOP;
+	
+	UPDATE logs.procedure_logs
+	SET
+	    end_time = CURRENT_TIMESTAMP,
+		status = 'COMPLETED'
+	WHERE log_id = v_process_id;
+
+	EXCEPTION WHEN OTHERS THEN
+	    UPDATE logs.procedure_logs
+		SET
+		    end_time = CURRENT_TIMESTAMP,
+		    status = 'FAILED',
+			error_message = SQLERRM
+		WHERE log_id = v_process_id;
+	RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+CALL ds.fill_account_balance_for_period('2018-01-01', '2018-01-31');
+
+Ссылка на видео: https://disk.yandex.ru/client/disk?idApp=client&dialog=slider&idDialog=%2Fdisk%2F%D0%9C%D0%B5%D1%80%D0%B3%D0%B5%D0%BD%D0%B5%D0%B2%20DE%20%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82%201%2C%20%D0%B7%D0%B0%D0%B4%D0%B0%D0%BD%D0%B8%D0%B5%202.mkv
