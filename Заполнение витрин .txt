@@ -314,4 +314,4 @@ $$ LANGUAGE plpgsql;
 
 CALL ds.fill_account_balance_for_period('2018-01-01', '2018-01-31');
 
-Ссылка на видео: https://disk.yandex.ru/client/disk?idApp=client&dialog=slider&idDialog=%2Fdisk%2F%D0%9C%D0%B5%D1%80%D0%B3%D0%B5%D0%BD%D0%B5%D0%B2%20DE%20%D0%9F%D1%80%D0%BE%D0%B5%D0%BA%D1%82%201%2C%20%D0%B7%D0%B0%D0%B4%D0%B0%D0%BD%D0%B8%D0%B5%202.mkv
+Ссылка на видео: https://disk.yandex.ru/i/pT-2dawwvrvn4A
