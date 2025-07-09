@@ -99,3 +99,4 @@ CONSTRAINT valid_end_time CHECK(
 );
 
 Ссылка на видео на яндекс диске: https://disk.yandex.ru/i/iNl8PRA9b1-0Eg
+Ссылка на видео на яндекс диске (дополнение): https://disk.yandex.ru/i/zw3KIovHzOrqKg
