@@ -18,6 +18,22 @@ CREATE TABLE IF NOT EXISTS dm.dm_account_balance_f
     balance_out_rub numeric(23,8)
 )
 
+--Создание таблицы логов
+
+CREATE TABLE IF NOT EXISTS logs.procedure_logs
+(
+    log_id bigint NOT NULL DEFAULT nextval('logs.procedure_logs_log_id_seq'::regclass),
+    procedure_name character varying(100) COLLATE pg_catalog."default" NOT NULL,
+    start_time timestamp without time zone NOT NULL,
+    end_time timestamp without time zone,
+    status character varying(20) COLLATE pg_catalog."default" NOT NULL,
+    rows_affected integer,
+    error_message text COLLATE pg_catalog."default",
+    parameters jsonb,
+    duration interval GENERATED ALWAYS AS ((end_time - start_time)) STORED,
+    CONSTRAINT procedure_logs_pkey PRIMARY KEY (log_id),
+    CONSTRAINT procedure_logs_status_check CHECK (status::text = ANY (ARRAY['STARTED'::character varying, 'COMPLETED'::character varying, 'FAILED'::character varying]::text[]))
+)
 
 --Процедура для наполнения данных в витрину dm_account_turnover_f
 CREATE OR REPLACE PROCEDURE ds.fill_account_turnover_f(i_on_date DATE)
