@@ -239,8 +239,8 @@ print('Проверка текущего баланса')
 check_balance(24656)
 
 print('Запуск ETL-процесса')
-load_csv_to_postgres('ft_balance_f.csv', 'ft_balance_f', truncate=True)
-
+load_csv_to_postgres('ft_balance_f.csv', 'ft_balance_f')
+#
 print('Проверка текущего баланса')
 check_balance(24656)
 

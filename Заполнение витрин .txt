@@ -1,4 +1,4 @@
---Создание витрины dm_account_turnover_f (удалил первичный ключ)
+--Создание витрины dm_account_turnover_f
 CREATE TABLE IF NOT EXISTS dm.dm_account_turnover_f 
 (
     on_date date NOT NULL,
@@ -6,18 +6,34 @@ CREATE TABLE IF NOT EXISTS dm.dm_account_turnover_f
     credit_amount numeric(23,8),
     credit_amount_rub numeric(23,8),
     debet_amount numeric(23,8),
-    debet_amount_rub numeric(23,8)
+    debet_amount_rub numeric(23,8),
+    PRIMARY KEY(on_date, account_rk)
 )
 
---Создание витрины dm_account_balance_f (удалил первичный ключ)
+--Создание витрины dm_account_balance_f
 CREATE TABLE IF NOT EXISTS dm.dm_account_balance_f
 (
     on_date date NOT NULL,
     account_rk integer NOT NULL,
     balance_out numeric(23,8),
-    balance_out_rub numeric(23,8)
+    balance_out_rub numeric(23,8),
+    PRIMARY KEY(on_date, account_rk)
 )
 
+
+--Создание таблицы логов
+CREATE TABLE logs.procedure_logs (
+    log_id BIGSERIAL PRIMARY KEY,
+    procedure_name VARCHAR(100) NOT NULL,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    status VARCHAR(20) NOT NULL CHECK (status IN ('STARTED', 'COMPLETED', 'FAILED')),
+    rows_affected INTEGER,
+    parameters JSONB,
+    error_message TEXT,
+    progress TEXT,
+    duration INTERVAL GENERATED ALWAYS AS (end_time - start_time) STORED
+);
 
 --Процедура для наполнения данных в витрину dm_account_turnover_f
 CREATE OR REPLACE PROCEDURE ds.fill_account_turnover_f(i_on_date DATE)
@@ -42,18 +58,18 @@ BEGIN
 
 	BEGIN
 	    DELETE FROM dm.dm_account_turnover_f WHERE on_date = i_on_date;
-		GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
-		v_rows_affected := v_rows_affected + v_temp_rows;
 
 		INSERT INTO dm.dm_account_turnover_f (
     on_date, account_rk, credit_amount, credit_amount_rub, debet_amount, debet_amount_rub
 		)
 		WITH
-		credit_turnover AS (
+		credit_debet_turnover AS (
             SELECT
 			    p.credit_account_rk AS account_rk,
 				SUM(p.credit_amount) AS credit_amount,
-				SUM(p.credit_amount * COALESCE(er.reduced_cource, 1)) AS credit_amount_rub
+				SUM(p.credit_amount * COALESCE(er.reduced_cource, 1)) AS credit_amount_rub,
+				SUM(p.debet_amount) AS debet_amount,
+				SUM(p.debet_amount * COALESCE(er.reduced_cource, 1)) AS debet_amount_rub
 			FROM ds.ft_posting_f p
 			JOIN ds.md_account_d a ON p.credit_account_rk = a.account_rk
 			    AND a.data_actual_date <= i_on_date 
@@ -63,32 +79,15 @@ BEGIN
 			AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
 			WHERE p.oper_date = i_on_date
 			GROUP BY p.credit_account_rk
-		),
-		debet_turnover AS (
-            SELECT
-			    p.debet_account_rk AS account_rk,
-				SUM(p.debet_amount) AS debet_amount,
-				SUM(p.debet_amount * COALESCE(er.reduced_cource, 1)) AS debet_amount_rub
-			FROM ds.ft_posting_f p
-			JOIN ds.md_account_d a ON p.debet_account_rk = a.account_rk
-			    AND a.data_actual_date <= i_on_date 
-				AND (a.data_actual_end_date IS NULL OR a.data_actual_end_date > i_on_date)
-			LEFT JOIN ds.md_exchange_rate_d er ON a.currency_rk = er.currency_rk
-			AND er.data_actual_date <= i_on_date 
-			AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
-			WHERE p.oper_date = i_on_date
-			GROUP BY p.debet_account_rk
 		)
 		SELECT
 		    i_on_date,
-			COALESCE(c.account_rk, d.account_rk),
+			account_rk,
 			COALESCE(c.credit_amount, 0),
 			COALESCE(c.credit_amount_rub, 0),
 			COALESCE(d.debet_amount, 0),
 			COALESCE(d.debet_amount_rub, 0)
-		FROM credit_turnover c
-		FULL OUTER JOIN debet_turnover d
-		ON c.account_rk = d.account_rk;
+		FROM credit_debet_turnover;
 
 		GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
 		v_rows_affected := v_temp_rows + v_rows_affected;

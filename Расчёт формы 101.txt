@@ -1,0 +1,192 @@
+--Создание витрины dm.dm_f101_round_f
+CREATE TABLE dm.dm_f101_round_f(
+    from_date DATE NOT NULL,
+	to_date DATE NOT NULL,
+	chapter CHAR(1),
+	ledger_account CHAR(5) NOT NULL,
+	characteristic CHAR(1),
+	balance_in_rub NUMERIC(23, 8),
+	balance_in_val NUMERIC(23, 8),
+	balance_in_total NUMERIC(23, 8),
+	turn_deb_rub NUMERIC(23, 8),
+	turn_deb_val NUMERIC(23, 8),
+	turn_deb_total NUMERIC(23, 8),
+	turn_cre_rub NUMERIC(23, 8),
+	turn_cre_val NUMERIC(23, 8),
+	turn_cre_total NUMERIC(23, 8),
+	balance_out_rub NUMERIC(23, 8),
+	balance_out_val NUMERIC(23, 8),
+	balance_out_total NUMERIC(23, 8),
+    PRIMARY KEY(from_date, to_date, ledger_account)
+);
+
+--Создание процедуры для заполнения витрины dm.dm_f101_round_f
+CREATE OR REPLACE PROCEDURE dm.fill_f101_round_f(i_on_date DATE)
+AS $$
+DECLARE
+    v_process_id BIGINT;
+	v_rows_affected INTEGER;
+	v_error_message TEXT;
+	v_report_start_date DATE;
+	v_report_end_date DATE;
+BEGIN
+
+    --Определяем период отчёта(предыдущий месяу)
+	v_report_start_date := (i_on_date - INTERVAL '1 month')::DATE;
+	v_report_end_date := (i_on_date - INTERVAL '1 day')::DATE;
+
+    --Начало лога
+    INSERT INTO logs.procedure_logs(
+        procedure_name,
+		start_time,
+		status,
+		parameters
+	) VALUES (
+        'dm.fill_f101_round_f',
+		CURRENT_TIMESTAMP,
+		'STARTED',
+		json_build_object('report_date', i_on_date, 'report_period', v_report_start_date || ' - ' || v_report_end_date)
+	) RETURNING log_id INTO v_process_id;
+
+    --Основная логика
+	BEGIN
+	    DELETE FROM dm.dm_f101_round_f
+		WHERE from_date = v_report_start_date AND to_date = v_report_end_date;
+
+		--Вставляем новые данные
+		INSERT INTO dm.dm_f101_round_f(
+        from_date, to_date, chapter, ledger_account, characteristic,
+            balance_in_rub, balance_in_val, balance_in_total,
+            turn_deb_rub, turn_deb_val, turn_deb_total,
+            turn_cre_rub, turn_cre_val, turn_cre_total,
+            balance_out_rub, balance_out_val, balance_out_total
+		)
+		WITH
+		--Получаем балансовые счета второго порядка (первые 5 цифр)
+		ledger_accounts AS (
+            SELECT
+			    SUBSTRING(a.account_number, 1, 5) AS ledger_account,
+				a.char_type AS characteristic,
+				MAX(la.chapter) AS chapter
+			FROM ds.md_account_d a
+			JOIN ds.md_ledger_account_s la 
+			    ON SUBSTRING(a.account_number, 1, 5) = CAST(la.ledger_account AS TEXT)
+				AND la.start_date <= v_report_start_date
+				AND la.end_Date > v_report_end_date
+			WHERE a.data_actual_date <= v_report_end_date
+			AND a.data_actual_end_date > v_report_start_date
+			GROUP BY SUBSTRING(a.account_number, 1, 5), a.char_type
+		),
+		--Остатки на начало периода(предыдущий месяц)
+		start_balances AS (
+            SELECT
+			    SUBSTRING(a.account_number, 1, 5) AS ledger_account,
+				a.char_type AS characteristic,
+				SUM(CASE WHEN a.currency_code IN ('810', '643') THEN b.balance_out_rub ELSE 0 END)
+				    AS balance_in_rub,
+				SUM(CASE WHEN a.currency_code NOT IN ('810', '643') THEN b.balance_out ELSE 0 END)
+				    AS balance_in_val,
+				SUM(b.balance_out_rub) AS balance_in_total
+				FROM dm.dm_account_balance_f b
+				JOIN ds.md_account_d a ON b.account_rk = a.account_rk
+				    AND a.data_actual_date <= v_report_start_date
+					AND a.data_actual_end_date >= v_report_end_date
+				WHERE b.on_date = v_report_start_date - INTERVAL '1 day'
+				GROUP BY SUBSTRING(a.account_number, 1, 5), a.char_type
+		),
+		--Остатки на конец периода(предыдущий месяц)
+		end_balances AS (
+            SELECT
+			    SUBSTRING(a.account_number, 1, 5) AS ledger_account,
+				a.char_type AS characteristic,
+				SUM(CASE WHEN a.currency_code IN ('810', '643') THEN b.balance_out_rub ELSE 0 END)
+				    AS balance_out_rub,
+				SUM(CASE WHEN a.currency_code NOT IN ('810', '643') THEN b.balance_out ELSE 0 END)
+				    AS balance_out_val,
+				SUM(b.balance_out_rub) AS balance_out_total
+				FROM dm.dm_account_balance_f b
+				JOIN ds.md_account_d a ON b.account_rk = a.account_rk
+				    AND a.data_actual_date <= v_report_end_date
+					AND a.data_actual_end_date >= v_report_end_date
+				WHERE b.on_date = v_report_end_date
+				GROUP BY SUBSTRING(a.account_number, 1, 5), a.char_type
+		),
+		--Обороты за период
+		period_turnovers AS (
+            SELECT
+			    SUBSTRING(a.account_number, 1, 5) AS ledger_account,
+			    a.char_type AS characteristic,
+			    SUM(CASE WHEN a.currency_code IN ('810', '643') THEN t.debet_amount_rub ELSE 0 END)
+			        AS turn_deb_rub,
+			    SUM(CASE WHEN a.currency_code NOT IN ('810', '643') THEN t.debet_amount ELSE 0 END)
+			        AS turn_deb_val,
+			    SUM(t.debet_amount_rub) AS turn_deb_total,
+				SUM(CASE WHEN a.currency_code IN ('810', '643') THEN t.credit_amount_rub ELSE 0 END)
+			        AS turn_cre_rub,
+			    SUM(CASE WHEN a.currency_code NOT IN ('810', '643') THEN t.credit_amount ELSE 0 END)
+			        AS turn_cre_val,
+			    SUM(t.credit_amount_rub) AS turn_cre_total
+			FROM dm.dm_account_turnover_f t
+			JOIN ds.md_account_d a ON t.account_rk = a.account_rk
+			    AND a.data_actual_date <= v_report_end_date
+				AND a.data_actual_end_date >= v_report_start_date
+			WHERE t.on_date BETWEEN v_report_start_date AND v_report_end_date
+			GROUP BY SUBSTRING(a.account_number, 1, 5), a.char_type
+		)
+		SELECT
+		    v_report_start_date AS from_date,
+			v_report_end_date AS to_date,
+			la.chapter,
+			la.ledger_account,
+			la.characteristic,
+			COALESCE(sb.balance_in_rub, 0),
+            COALESCE(sb.balance_in_val, 0),
+            COALESCE(sb.balance_in_total, 0),
+            COALESCE(pt.turn_deb_rub, 0),
+            COALESCE(pt.turn_deb_val, 0),
+            COALESCE(pt.turn_deb_total, 0),
+            COALESCE(pt.turn_cre_rub, 0),
+            COALESCE(pt.turn_cre_val, 0),
+            COALESCE(pt.turn_cre_total, 0),
+            COALESCE(eb.balance_out_rub, 0),
+            COALESCE(eb.balance_out_val, 0),
+            COALESCE(eb.balance_out_total, 0)
+		FROM ledger_accounts la
+		LEFT JOIN start_balances sb ON la.ledger_account = sb.ledger_account
+		    AND la.characteristic = sb.characteristic
+		LEFT JOIN end_balances eb ON la.ledger_account = eb.ledger_account
+		    AND la.characteristic = eb.characteristic
+		LEFT JOIN period_turnovers pt ON la.ledger_account = pt.ledger_account
+		    AND la.characteristic = pt.characteristic;
+
+
+		GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+
+		--Логирование успеха
+		UPDATE logs.procedure_logs
+		SET
+		    end_time = CURRENT_TIMESTAMP,
+			status = 'COMPLETED',
+			rows_affected = v_rows_affected
+		WHERE log_id = v_process_id;
+
+	EXCEPTION WHEN OTHERS THEN
+	    --Логирование ошибки
+        GET STACKED DIAGNOSTICS v_error_message = MESSAGE_TEXT;
+		
+		UPDATE logs.procedure_logs
+		SET
+		    end_time = CURRENT_TIMESTAMP,
+			status = 'FAILED',
+			error_message = v_error_message,
+			rows_affected = v_rows_affected
+		WHERE log_id = v_process_id;
+
+		RAISE;
+	END;
+END;
+$$ LANGUAGE plpgsql;
+
+CALL dm.fill_f101_round_f('2018-02-01'); -- вызов процедуры
+
+Ссылка на видео: https://disk.yandex.ru/i/Kl5CyS8pQf731g
