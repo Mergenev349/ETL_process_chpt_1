@@ -98,4 +98,5 @@ CONSTRAINT valid_end_time CHECK(
 )
 );
 
-Ссылка на видео на яндекс диске: https://disk.yandex.ru/client/disk?idApp=client&dialog=slider&idDialog=%2Fdisk%2F2025-07-01%2018-18-56.mkv
+Ссылка на видео на яндекс диске: https://disk.yandex.ru/i/iNl8PRA9b1-0Eg
+Ссылка на видео на яндекс диске (дополнение): https://disk.yandex.ru/i/zw3KIovHzOrqKg
