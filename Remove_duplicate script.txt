@@ -1,0 +1,48 @@
+--Процедура для удаления дубликатов из витрины dm.client
+CREATE OR REPLACE PROCEDURE dm.remove_duplicates()
+AS $$
+DECLARE
+    rows_deleted BIGINT;
+BEGIN
+    --Логируем начало операции (если нет таблицы для логирования)
+    RAISE NOTICE 'Начало удаления дубликатов из таблицы dm.client';
+
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables 
+              WHERE table_schema = 'dm' AND table_name = 'client') THEN
+	    RAISE EXCEPTION 'Таблица dm.client не существует';
+	END IF;
+
+	DELETE FROM dm.client c1
+	USING dm.client c2
+	WHERE
+	    c1.ctid < c2.ctid -- сравниваем физическое расположение версии строк в таблице
+		AND c1.client_rk = c2.client_rk
+		AND c1.effective_from_date = c2.effective_from_date;
+
+	GET DIAGNOSTICS rows_deleted = ROW_COUNT;
+
+	-- Логируем результат (если нет таблицы для логирования)
+    RAISE NOTICE 'Удалено % дубликатов из таблицы dm.client', rows_deleted;
+		
+EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'Ошибка при удалении дубликатов.';
+END;
+$$ LANGUAGE plpgsql;
+
+CALL dm.remove_duplicates()
+
+
+Альтернативные варианты:
+1. Создание временной таблицы и удаление оригинала
+CREATE temp_table AS SELECT DISTINCT * FROM original_table;
+DROP original_table;
+ALTER TABLE temp_table RENAME TO original_table;
+
+2. Группировка и удаление дубликатов
+DELETE FROM original_table
+WHERE ctid NOT IN(
+SELECT MIN(ctid) FROM original_table
+GROUP BY column_1, column_2, column_3
+);
+
+Ссылка на видео: https://disk.yandex.ru/i/eN9RHbrJqF4Lcg
