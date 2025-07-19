@@ -1,0 +1,148 @@
+--Создание копии витрины dm.loan_holiday_info
+CREATE TABLE dm.loan_holiday_info_backup AS SELECT * FROM dm.loan_holiday_info;
+TRUNCATE TABLE dm.loan_holiday_info_backup (очистка таблицы)
+
+--Определение количества записей в витрине dm.loan_holiday_info
+SELECT COUNT(*) FROM dm.loan_holiday_info -- 10002 записи
+
+--Создание копий таблиц rd.deal_info и rd.product
+CREATE TABLE rd.deal_info_backup AS SELECT * FROM rd.deal_info;
+CREATE TABLE rd.product_backup AS SELECT * FROM rd.product;
+
+--Определение актуальных данным по значениям effective_from_date и effective_to_date для всех таблиц (как оригинальных, так и дополненных новыми данными)
+SELECT DISTINCT effective_from_date FROM rd.deal_info; -- 2023-08-11 , 2023-01-01
+SELECT DISTINCT effective_to_date FROM rd.deal_info; -- 2999-12-31
+
+SELECT DISTINCT effective_from_date FROM rd.loan_holiday; -- 2023-08-11 , 2023-01-01, 2023-03-15
+SELECT DISTINCT effective_to_date FROM rd.loan_holiday; -- 2999-12-31
+
+SELECT DISTINCT effective_from_date  FROM rd.product -- 2023-03-15;
+SELECT DISTINCT effective_to_date  FROM rd.product -- 2999-12-31;
+
+SELECT DISTINCT effective_from_date FROM rd.deal_info_backup; -- 2023-08-11 , 2023-01-01, 2023-03-15
+SELECT DISTINCT effective_to_date FROM rd.deal_info_backup; -- 2999-12-31
+
+SELECT DISTINCT effective_from_date  FROM rd.product_backup -- 2023-08-11 , 2023-01-01, 2023-03-15
+SELECT DISTINCT effective_to_date  FROM rd.product_backup -- 2999-12-31;
+
+--Исправленный вариант процедуры для заполнения витрины dm.loan_holiday_info
+CREATE OR REPLACE PROCEDURE fill_loan_holiday_info()
+AS $$
+DECLARE
+    rows_affected BIGINT;
+BEGIN
+		INSERT INTO dm.loan_holiday_info (
+	    deal_rk, effective_from_date, effective_to_date, agreement_rk, account_rk,
+		client_rk, department_rk, product_rk, product_name, deal_type_cd, deal_start_date,
+		deal_name, deal_number, deal_sum, loan_holiday_type_cd, loan_holiday_start_date,
+		loan_holiday_finish_date, loan_holiday_fact_finish_date, loan_holiday_finish_flg,
+		loan_holiday_last_possible_date
+		)  
+		with deal as (
+				select  deal_rk
+					   ,deal_num --Номер сделки
+					   ,deal_name --Наименование сделки
+					   ,deal_sum --Сумма сделки
+					   ,client_rk--Ссылка на клиента
+					   ,account_rk
+					   ,agreement_rk --Ссылка на договор
+					   ,deal_start_date --Дата начала действия сделки
+					   ,department_rk --Ссылка на отделение
+					   ,product_rk -- Ссылка на продукт
+					   ,deal_type_cd
+					   ,effective_from_date -- Дата начала действия записи
+					   ,effective_to_date -- Дата окончания действия записи
+				from RD.deal_info_backup
+		), loan_holiday as (
+				select  deal_rk
+					   ,loan_holiday_type_cd  --Ссылка на тип кредитных каникул
+					   ,loan_holiday_start_date     --Дата начала кредитных каникул
+					   ,loan_holiday_finish_date    --Дата окончания кредитных каникул
+					   ,loan_holiday_fact_finish_date      --Дата окончания кредитных каникул фактическая
+					   ,loan_holiday_finish_flg     --Признак прекращения кредитных каникул по инициативе заёмщика
+					   ,loan_holiday_last_possible_date    --Последняя возможная дата кредитных каникул
+					   ,effective_from_date
+					   ,effective_to_date
+				from RD.loan_holiday
+		), product as (
+				select product_rk
+					  ,product_name
+					  ,effective_from_date
+					  ,effective_to_date
+				from RD.product_backup
+		), holiday_info as (
+				select   lh.deal_rk
+				        ,lh.effective_from_date
+				        ,lh.effective_to_date
+				        ,d.deal_num as deal_number --Номер сделки
+					    ,lh.loan_holiday_type_cd  --Ссылка на тип кредитных каникул
+				        ,lh.loan_holiday_start_date     --Дата начала кредитных каникул
+				        ,lh.loan_holiday_finish_date    --Дата окончания кредитных каникул
+				        ,lh.loan_holiday_fact_finish_date      --Дата окончания кредитных каникул фактическая
+				        ,lh.loan_holiday_finish_flg     --Признак прекращения кредитных каникул по инициативе заёмщика
+				        ,lh.loan_holiday_last_possible_date    --Последняя возможная дата кредитных каникул
+				        ,d.deal_name --Наименование сделки
+				        ,d.deal_sum --Сумма сделки
+				        ,d.client_rk--Ссылка на контрагента
+						,d.account_rk
+				        ,d.agreement_rk --Ссылка на договор
+				        ,d.deal_start_date --Дата начала действия сделки
+				        ,d.department_rk --Ссылка на ГО/филиал
+				        ,d.product_rk -- Ссылка на продукт
+				        ,p.product_name -- Наименование продукта
+				        ,d.deal_type_cd -- Наименование типа сделки
+				from loan_holiday lh
+				left join deal d on lh.deal_rk = d.deal_rk
+				                             and d.effective_from_date <= lh.effective_to_date
+											 and d.effective_to_date >= lh.effective_from_date
+				left join product p on p.product_rk = d.product_rk
+									   and p.effective_from_date <= d.effective_to_date
+									   and p.effective_to_date >= d.effective_from_date
+				)
+		SELECT deal_rk
+			  ,effective_from_date
+			  ,effective_to_date
+			  ,agreement_rk
+			  ,client_rk
+			  ,account_rk
+			  ,department_rk
+			  ,product_rk
+			  ,product_name
+			  ,deal_type_cd
+			  ,deal_start_date
+			  ,deal_name
+			  ,deal_number
+			  ,deal_sum
+			  ,loan_holiday_type_cd
+			  ,loan_holiday_start_date
+			  ,loan_holiday_finish_date
+			  ,loan_holiday_fact_finish_date
+			  ,loan_holiday_finish_flg
+			  ,loan_holiday_last_possible_date
+		FROM holiday_info
+			;
+
+		GET DIAGNOSTICS rows_affected = ROW_COUNT;
+		RAISE NOTICE 'В витрину dm.loan_holiday_info внесено % записей', rows_affected;
+
+EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'Ошибка % при вставке данных', SQLERRM;
+
+END;
+$$ LANGUAGE plpgsql;
+
+--Очистка витрины dm.loan_holiday_info
+TRUNCATE TABLE dm.loan_holiday_info_
+
+--Вызов процедуры
+CALL fill_loan_holiday_info()
+
+--Проверка результата
+SELECT * FROM dm.loan_holiday_info;
+SELECT COUNT(*) FROM dm.loan_holiday_info;
+
+
+Скрипт для заполнения таблиц rd.deal_info и rd.product актуальными данными из deal_info.csv и product_info.csv соответственно
+представлен в файле Task 1.4. Load_db_to_csv (функция load_csv_to_database).
+
+Ссылка на видео: https://disk.yandex.ru/i/tap9GXThQFNCxA

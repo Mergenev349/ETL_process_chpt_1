@@ -212,7 +212,7 @@ def load_csv_to_database(csv_file, table_name='dm_f101_round_f_v2', schema='dm',
 
 
 
-load_csv_to_database('deal_info.csv', table_name='deal_info_backup', schema='rd', truncate=True)
-#load_csv_to_database('product_info.csv', table_name='product_backup', schema='rd', truncate=True)
+load_csv_to_database('deal_info.csv', table_name='deal_info_backup', schema='rd')
+load_csv_to_database('product_info.csv', table_name='product_backup', schema='rd')
 
 #Ссылка на видео: https://disk.yandex.ru/i/sjYOKV-JQKSk4g

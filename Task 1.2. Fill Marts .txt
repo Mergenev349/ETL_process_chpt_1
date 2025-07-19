@@ -78,29 +78,28 @@ BEGIN
 		)
 		WITH
 		credit_debet_turnover AS (
-            SELECT
-			    p.credit_account_rk AS account_rk,
-				SUM(p.credit_amount) AS credit_amount,
-				SUM(p.credit_amount * COALESCE(er.reduced_cource, 1)) AS credit_amount_rub,
-				SUM(p.debet_amount) AS debet_amount,
-				SUM(p.debet_amount * COALESCE(er.reduced_cource, 1)) AS debet_amount_rub
-			FROM ds.ft_posting_f p
-			JOIN ds.md_account_d a ON p.credit_account_rk = a.account_rk
-			    AND a.data_actual_date <= i_on_date 
-				AND (a.data_actual_end_date IS NULL OR a.data_actual_end_date > i_on_date)
-			LEFT JOIN ds.md_exchange_rate_d er ON a.currency_rk = er.currency_rk
-			AND er.data_actual_date <= i_on_date 
-			AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
-			WHERE p.oper_date = i_on_date
-			GROUP BY p.credit_account_rk
+            		SELECT
+           			a.account_rk AS account_rk,
+           			SUM(case a.account_rk when p.credit_account_rk then p.credit_amount else 0 end) AS credit_amount,
+           			SUM(case a.account_rk when p.credit_account_rk then p.credit_amount else 0 end * COALESCE(er.reduced_cource, 1)) AS credit_amount_rub,
+           			SUM(case a.account_rk when p.debet_account_rk then p.debet_amount else 0 end) AS debet_amount,
+           			SUM(case a.account_rk when p.debet_account_rk then p.debet_amount else 0 end * COALESCE(er.reduced_cource, 1)) AS debet_amount_rub
+      			FROM ds.md_account_d a
+      			JOIN ds.ft_posting_f p ON a.account_rk in (p.credit_account_rk, p.debet_account_rk)
+       				AND p.oper_date = i_on_date
+      			LEFT JOIN ds.md_exchange_rate_d er 
+        			ON a.currency_rk = er.currency_rk
+       				AND i_on_date between er.data_actual_date and nvl(er.data_actual_end_date,date '2050-12-31')
+     			WHERE i_on_date between a.data_actual_date and nvl(a.data_actual_end_date,date '2050-12-31')
+     			GROUP BY a.account_rk
 		)
 		SELECT
 		    i_on_date,
 			account_rk,
-			COALESCE(c.credit_amount, 0),
-			COALESCE(c.credit_amount_rub, 0),
-			COALESCE(d.debet_amount, 0),
-			COALESCE(d.debet_amount_rub, 0)
+			COALESCE(credit_amount, 0),
+			COALESCE(credit_amount_rub, 0),
+			COALESCE(debet_amount, 0),
+			COALESCE(debet_amount_rub, 0)
 		FROM credit_debet_turnover;
 
 		GET DIAGNOSTICS v_temp_rows = ROW_COUNT;
@@ -196,7 +195,7 @@ BEGIN
 			LEFT JOIN ds.md_exchange_rate_d er 
 				ON a.currency_rk = er.currency_rk
 				AND er.data_actual_date <= i_on_date 
-				AND (er.data_actual_end_date IS NULL OR er.data_actual_end_date > i_on_date)
+				AND  i_on_date between a.data_actual_date and nvl(a.data_actual_end_date,date '2050-12-31')
 			WHERE b.on_date = i_on_date;
         ELSE
             -- Для последующих дат - расчет по алгоритму
