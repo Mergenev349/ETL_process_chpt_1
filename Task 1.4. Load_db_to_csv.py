@@ -6,7 +6,7 @@ import sys
 db_config = {
     "host": "localhost",
     "port": 5432,
-    "dbname": "postgres",
+    "dbname": "dwh",
     "user": "postgres",
     "password": "19962011"
 }
@@ -132,6 +132,16 @@ def load_csv_to_database(csv_file, table_name='dm_f101_round_f_v2', schema='dm',
     try:
         conn = psycopg2.connect(**db_config)
 
+        # Пробуем определить кодировку файла
+        try:
+            import chardet
+            with open(csv_file, 'rb') as f:
+                rawdata = f.read(10000) # Читаем первые 10Кб для определения
+                encoding = chardet.detect(rawdata)['encoding'] or 'utf-8'
+        except ImportError:
+            encoding = 'utf-8'
+
+
         with conn.cursor() as cursor:
             # Очистка таблицы по необходимости
             if truncate:
@@ -139,15 +149,35 @@ def load_csv_to_database(csv_file, table_name='dm_f101_round_f_v2', schema='dm',
                 conn.commit()
                 print(f'Таблица {schema}.{table_name} полностью очищена.')
 
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                rows_count = sum(1 for _ in f) - 1 # Вычитаем заголовки
+            try:
+                with open(csv_file, 'r', encoding=encoding) as f:
+                    rows_count = sum(1 for _ in f) - 1 # Вычитаем заголовки
+            except UnicodeDecodeError:
+                # Пробуем альтернативные кодировки
+                for alt_enc in ['windows-1251', 'cp1251', 'iso-8859-1']:
+                    try:
+                        with open(csv_file, 'r', encoding=alt_enc) as f:
+                            rows_count = sum(1 for _ in f) - 1
+                            encoding = alt_enc
+                            break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    raise ValueError('Не удалось определить кодировку файла')
 
-            with open(csv_file, 'r', encoding='utf-8') as f:
-                next(f) # Пропускаем заголовок
-                cursor.copy_expert(
-                    f'COPY {schema}.{table_name} FROM STDIN WITH CSV',
-                    f
-                )
+            with open(csv_file, 'r', encoding=encoding) as f:
+                reader = csv.reader(f)
+                headers = next(reader)
+                placeholders = ', '.join(['%s'] * len(headers))
+                insert_query = f"INSERT INTO {schema}.{table_name} VALUES ({placeholders})"
+
+                for row in reader:
+                    cursor.execute(insert_query, row)
+                # next(f) # Пропускаем заголовок
+                # cursor.copy_expert(
+                #     f'COPY {schema}.{table_name} FROM STDIN WITH CSV',
+                #     f
+                # )
 
             conn.commit()
 
@@ -182,7 +212,7 @@ def load_csv_to_database(csv_file, table_name='dm_f101_round_f_v2', schema='dm',
 
 
 
-#load_database_to_csv('f101_table.csv')
-#load_csv_to_database('f101_table.csv')
+load_csv_to_database('deal_info.csv', table_name='deal_info_backup', schema='rd', truncate=True)
+#load_csv_to_database('product_info.csv', table_name='product_backup', schema='rd', truncate=True)
 
 #Ссылка на видео: https://disk.yandex.ru/i/sjYOKV-JQKSk4g
