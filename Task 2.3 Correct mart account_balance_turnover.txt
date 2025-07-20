@@ -1,0 +1,100 @@
+--Создание бэкапа витрины
+CREATE TABLE dm.account_balance_turnover_backup AS SELECT * FROM dm.account_balance_turnover
+
+--При отличии account_in_sum и account_out_sum считаем верным account_out_sum
+CREATE TABLE rd.account_balance_v1 AS
+SELECT 
+    account_rk,
+	effective_date,
+	COALESCE(LAG(account_out_sum) OVER(PARTITION BY account_rk ORDER BY effective_date), 0) as account_in_sum,
+	account_out_sum
+FROM rd.account_balance;
+
+SELECT * FROM rd.account_balance_v1
+
+--При отличии account_in_sum и account_out_sum считаем верным account_in_sum
+CREATE TABLE rd.account_balance_v2 AS
+SELECT 
+    account_rk,
+	effective_date,
+	account_in_sum,
+	COALESCE(LEAD(account_in_sum) OVER(PARTITION BY account_rk ORDER BY effective_date), 0) as account_out_sum
+FROM rd.account_balance;
+
+SELECT * FROM rd.account_balance_v2
+
+--Создание процедуры dm.fill_account_balance_turnover
+CREATE OR REPLACE PROCEDURE dm.fill_account_balance_turnover()
+AS $$
+DECLARE
+    v_process_id BIGINT;
+    v_rows_affected BIGINT;
+	v_error_message TEXT;
+BEGIN
+    --Начало логирования
+    INSERT INTO logs.procedure_logs(
+        procedure_name,
+		start_time,
+		status
+	) VALUES (
+        'dm.fill_account_balance_turnover',
+		CURRENT_TIMESTAMP,
+		'STARTED'
+	) RETURNING log_id INTO v_process_id;
+
+    BEGIN
+	    --Очистка таблицы
+        TRUNCATE TABLE dm.account_balance_turnover;
+
+		INSERT INTO dm.account_balance_turnover(
+            account_rk, currency_name, department_rk, effective_date,
+			account_in_sum, account_out_sum
+		)
+		SELECT a.account_rk,
+			   COALESCE(dc.currency_name, '-1'::TEXT) AS currency_name,
+			   a.department_rk,
+			   ab.effective_date,
+			   ab.account_in_sum,
+			   ab.account_out_sum
+		FROM rd.account a
+		LEFT JOIN rd.account_balance_v1 ab ON a.account_rk = ab.account_rk
+		LEFT JOIN dm.dict_currency dc ON a.currency_cd = dc.currency_cd;
+
+        --Получение статистики по обработанным строкам
+		GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
+
+        --Логирование успеха
+		UPDATE logs.procedure_logs
+		SET end_time = CURRENT_TIMESTAMP,
+		    status = 'COMPLETED',
+			rows_affected = v_rows_affected
+		WHERE log_id = v_process_id;
+
+    --Логирование неудачи
+	EXCEPTION WHEN OTHERS THEN
+	   GET STACKED DIAGNOSTICS v_error_message = MESSAGE_TEXT;
+	   UPDATE logs.procedure_logs
+	   SET end_time = CURRENT_TIMESTAMP,
+		   status = 'FAILED',
+		   error_message = v_error_message,
+		   rows_affected = v_rows_affected
+	   WHERE log_id = v_process_id;
+    RAISE;
+	END;
+END;
+$$ LANGUAGE plpgsql;
+
+--Вызов процедуры
+CALL dm.fill_account_balance_turnover()
+
+--Сравнение результатов в витринах
+SELECT * FROM dm.account_balance_turnover
+WHERE account_rk = '2943625';
+
+SELECT * FROM dm.account_balance_turnover_backup
+WHERE account_rk = '2943625';
+
+--Проверка логирования процессов
+SELECT * FROM logs.procedure_logs
+
+Ссылка на видео: https://disk.yandex.ru/i/9Tn6gkhSLnkYcw
