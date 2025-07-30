@@ -173,11 +173,6 @@ def load_csv_to_database(csv_file, table_name='dm_f101_round_f_v2', schema='dm',
 
                 for row in reader:
                     cursor.execute(insert_query, row)
-                # next(f) # Пропускаем заголовок
-                # cursor.copy_expert(
-                #     f'COPY {schema}.{table_name} FROM STDIN WITH CSV',
-                #     f
-                # )
 
             conn.commit()
 
