@@ -32,8 +32,8 @@ DECLARE
 BEGIN
 
     --Определяем период отчёта(предыдущий месяу)
-	v_report_start_date := (i_on_date - INTERVAL '1 month')::DATE;
-	v_report_end_date := (i_on_date - INTERVAL '1 day')::DATE;
+	v_report_start_date := date_trunc('month', (i_on_date - INTERVAL '1 month'))::DATE;
+    v_report_end_date := (date_trunc('month', i_on_date) - INTERVAL '1 day')::DATE;
 
     --Начало лога
     INSERT INTO logs.procedure_logs(
